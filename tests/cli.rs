@@ -105,6 +105,43 @@ fn missing_column_is_an_error() {
 }
 
 #[test]
+fn duplicate_flag_is_an_error() {
+    let out = run(
+        &[
+            "--key",
+            "user_id",
+            "--time",
+            "timestamp",
+            "--gap",
+            "10m",
+            "--gap",
+            "30m",
+        ],
+        &format!("{HEADER}\n"),
+    );
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("more than once")
+    );
+}
+
+#[test]
+fn duplicate_column_is_an_error() {
+    let out = sessions(
+        "user_id\ttimestamp\tuser_id\nu1\t2026-10-09T12:00:00+09:00\tu2\n",
+        "30m",
+    );
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("duplicate column")
+    );
+}
+
+#[test]
 fn keys_are_used_verbatim_not_trimmed() {
     // "u1" and "u1 " (trailing space) are different keys — never merged, even 1s apart.
     let input = format!(

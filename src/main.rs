@@ -2,9 +2,7 @@
 //!
 //! A small Unix filter: reads a header-bearing TSV, groups events per key under one
 //! idle-gap definition, and emits the input rows unchanged plus a `session_id` column
-//! (in input order). Facts only — it reproduces a session definition so its effect on
-//! a downstream metric can be checked; it does not judge the gap or prevent merges.
-//! See `src/lib.rs` for the pure core and the facts-not-verdict stance.
+//! (in input order). See `src/lib.rs` for the pure core and the facts-not-verdict stance.
 //!
 //! I/O is TSV (composes with `jq -r '@tsv'`). Input contract: the key and time fields
 //! contain no tab or newline (true for ids and RFC3339).
@@ -53,14 +51,21 @@ fn parse_dur(s: &str) -> Result<Duration, String> {
     d.ok_or_else(|| format!("duration out of range: {s}"))
 }
 
+fn set_once<T>(slot: &mut Option<T>, val: T, flag: &str) -> Result<(), String> {
+    if slot.replace(val).is_some() {
+        return Err(format!("{flag} specified more than once"));
+    }
+    Ok(())
+}
+
 fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut file, mut key, mut time, mut gap) = (None, None, None, None);
     while let Some(a) = it.next() {
-        let mut next = |name: &str| it.next().ok_or(format!("{name} needs a value"));
+        let mut next = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
         match a.as_str() {
-            "--key" => key = Some(next("--key")?),
-            "--time" => time = Some(next("--time")?),
-            "--gap" => gap = Some(parse_dur(&next("--gap")?)?),
+            "--key" => set_once(&mut key, next("--key")?, "--key")?,
+            "--time" => set_once(&mut time, next("--time")?, "--time")?,
+            "--gap" => set_once(&mut gap, parse_dur(&next("--gap")?)?, "--gap")?,
             other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
             other => {
                 if file.replace(other.to_string()).is_some() {
@@ -78,10 +83,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
 }
 
 fn col(header: &[&str], name: &str) -> Result<usize, String> {
-    header
-        .iter()
-        .position(|h| *h == name)
-        .ok_or(format!("column not found: {name}"))
+    let mut found = header.iter().enumerate().filter(|(_, h)| **h == name);
+    match (found.next(), found.next()) {
+        (Some((i, _)), None) => Ok(i),
+        (None, _) => Err(format!("column not found: {name}")),
+        (Some(_), Some(_)) => Err(format!("duplicate column: {name}")),
+    }
 }
 
 fn read_input(file: &Option<String>) -> Result<String, String> {
@@ -132,6 +139,7 @@ fn run_sessionize(args: Args) -> Result<(), String> {
     }
 
     let ids = sessionize(&events, args.gap);
+    debug_assert_eq!(ids.len(), raws.len());
 
     let out = io::stdout();
     let mut out = io::BufWriter::new(out.lock());

@@ -38,7 +38,7 @@ pub fn sessionize(events: &[(String, DateTime<FixedOffset>)], gap: Duration) -> 
     for &i in &order {
         let (key, time) = (events[i].0.as_str(), events[i].1);
         let new_key = cur_key != Some(key);
-        let gapped = prev.is_some_and(|p| time - p > gap);
+        let gapped = !new_key && prev.is_some_and(|p| time - p > gap);
         if new_key || gapped {
             sid += 1;
             cur_key = Some(key);
@@ -145,6 +145,17 @@ mod tests {
             ev("u1", "2026-10-09T12:00:00+09:00"),
             ev("u1", "2026-10-09T12:00:00+09:00"),
             ev("u1", "2026-10-09T12:00:03+09:00"),
+        ];
+        let ids = sessionize(&e, GAP);
+        assert_eq!(session_count(&ids), 1);
+    }
+
+    #[test]
+    fn same_instant_different_offset_is_one_session() {
+        // 12:00+09:00 == 03:00Z — compared on the instant, not the wall-clock text.
+        let e = [
+            ev("u1", "2026-10-09T12:00:00+09:00"),
+            ev("u1", "2026-10-09T03:00:00Z"),
         ];
         let ids = sessionize(&e, GAP);
         assert_eq!(session_count(&ids), 1);
