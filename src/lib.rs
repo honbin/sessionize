@@ -1,5 +1,5 @@
-//! Core logic for `data-probe sessions`: assign a session id to keyed, timestamped
-//! events. Kept free of I/O so it can be unit-tested without spawning the binary.
+//! Core logic for `sessionize`: assign a session id to keyed, timestamped events.
+//! Kept free of I/O so it can be unit-tested without spawning the binary.
 //!
 //! Facts, not a verdict: it reproduces a session definition (idle gap), it does not
 //! claim the gap is the *right* boundary, and it does not prevent reopen-merge —

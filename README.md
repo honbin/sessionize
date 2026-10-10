@@ -1,38 +1,35 @@
-# data-probe
+# sessionize
 
-Small tools to probe the premises an aggregate rests on — written in Rust.
+Assign session IDs to keyed, timestamped events — a small Unix filter in Rust.
 
-A number is only as trustworthy as the data and the definitions under it. Before you
-read a rate, a median, or a funnel, it helps to ask: who is in the denominator, what
-was censored, and does the number move if you count a little differently? `data-probe`
-turns some of those questions into small, composable commands.
+A number is only as trustworthy as the definitions under it. One premise hiding under an
+aggregate is *how events were grouped into sessions*: change the idle gap and a rate can
+move. `sessionize` makes that grouping explicit and reproducible — it assigns a
+`session_id` so the metric is computed downstream, and you can re-run with a different
+gap and compare.
 
-It reports **facts, not verdicts**. It never says a number is wrong or a definition is
-right — it surfaces what the number depends on and leaves the judgement to you and the
+It reports **facts, not verdicts**. It never says a gap is the right boundary or a
+number is wrong — it reproduces a session definition and leaves the judgement to the
 downstream analysis.
-
-data-probe currently provides one command, `sessions` — assign session IDs to keyed,
-timestamped events under one idle-gap definition. Others are added only when a real
-analysis needs them.
 
 ## Install
 
 ```
-cargo install --git https://github.com/honbin/data-probe --locked
+cargo install --git https://github.com/honbin/sessionize --locked
 ```
 
-Needs a Rust toolchain; installs the `data-probe` binary to `~/.cargo/bin`.
+Needs a Rust toolchain; installs the `sessionize` binary to `~/.cargo/bin`.
 
-## sessions
+## Usage
 
 ```
-data-probe sessions [FILE] --key <col> --time <col> --gap <dur>
+sessionize [FILE] --key <col> --time <col> --gap <dur>
 ```
 
-Reads a header-bearing **TSV** (stdin if `FILE` is omitted), sorts internally, and
-emits the input rows unchanged plus a `session_id` column — **in the original row
-order**. Events are grouped by key; within each key, a new session starts when the
-idle gap is strictly greater than `--gap`.
+Reads a header-bearing **TSV** (stdin if `FILE` is omitted), sorts internally, and emits
+the input rows unchanged plus a `session_id` column — **in the original row order**.
+Events are grouped by key; within each key, a new session starts when the idle gap is
+strictly greater than `--gap`.
 
 - `--gap` idle gap: `90s` / `10m` / `2h` (a bare number is seconds).
 - Timestamps (`--time`) must be RFC3339 with an explicit offset (`2026-10-10T10:00:00+09:00`
@@ -52,16 +49,13 @@ the metric live downstream:
 { printf 'user_id\ttimestamp\tevent\n'
   jq -r '[.user_id, .timestamp, .event] | @tsv' events.jsonl
 } \
-  | data-probe sessions --key user_id --time timestamp --gap 10m \
+  | sessionize --key user_id --time timestamp --gap 10m \
   | awk -F '\t' '...'   # group by session_id, compute the metric
 ```
 
 The reshaping step is yours — a different source (a columnar export, a query result
-shaped as field/value pairs) needs its own extraction. `data-probe` only asks for the
+shaped as field/value pairs) needs its own extraction. `sessionize` only asks for the
 header-bearing TSV above.
-
-(`awk`'s default field split is whitespace, not TSV — use `-F '\t'` so empty fields
-don't shift columns.)
 
 ### What it does *not* do
 
@@ -70,7 +64,7 @@ don't shift columns.)
   *reproducible*, so you can see how that definition moves a metric — run it twice with
   different `--gap` and compare downstream.
 - **It does not judge the definition.** Reproducing what some other code computed, and
-  that definition being analytically correct, are different things. `data-probe` only
+  that definition being analytically correct, are different things. `sessionize` only
   gives you the first; the second is yours to argue.
 
 ## Build & test

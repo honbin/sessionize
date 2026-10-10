@@ -4,30 +4,22 @@ use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
 fn run(args: &[&str], stdin: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_data-probe"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sessionize"))
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn data-probe");
+        .expect("spawn sessionize");
     let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
-    child.wait_with_output().expect("wait data-probe")
+    child.wait_with_output().expect("wait sessionize")
 }
 
 const HEADER: &str = "user_id\ttimestamp\tevent";
 
 fn sessions(stdin: &str, gap: &str) -> Output {
     run(
-        &[
-            "sessions",
-            "--key",
-            "user_id",
-            "--time",
-            "timestamp",
-            "--gap",
-            gap,
-        ],
+        &["--key", "user_id", "--time", "timestamp", "--gap", gap],
         stdin,
     )
 }
@@ -113,17 +105,6 @@ fn missing_column_is_an_error() {
 }
 
 #[test]
-fn unknown_subcommand_is_an_error() {
-    let out = run(&["coverage"], "");
-    assert!(!out.status.success());
-    assert!(
-        String::from_utf8(out.stderr)
-            .unwrap()
-            .contains("unknown command")
-    );
-}
-
-#[test]
 fn keys_are_used_verbatim_not_trimmed() {
     // "u1" and "u1 " (trailing space) are different keys — never merged, even 1s apart.
     let input = format!(
@@ -141,7 +122,6 @@ fn keys_are_used_verbatim_not_trimmed() {
 fn multiple_input_files_are_an_error() {
     let out = run(
         &[
-            "sessions",
             "a.tsv",
             "b.tsv",
             "--key",

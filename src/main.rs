@@ -1,29 +1,29 @@
-//! `data-probe` — small tools to probe the premises an aggregate rests on.
+//! `sessionize` — assign a session_id to keyed, timestamped events.
 //!
-//! One subcommand today: `sessions`, which assigns a `session_id` to keyed,
-//! timestamped events under one idle-gap definition. The box is deliberately almost
-//! empty — more probes are added only when a real analysis needs one, never to fill
-//! the name. See `src/lib.rs` for the facts-not-verdict stance.
+//! A small Unix filter: reads a header-bearing TSV, groups events per key under one
+//! idle-gap definition, and emits the input rows unchanged plus a `session_id` column
+//! (in input order). Facts only — it reproduces a session definition so its effect on
+//! a downstream metric can be checked; it does not judge the gap or prevent merges.
+//! See `src/lib.rs` for the pure core and the facts-not-verdict stance.
 //!
-//! I/O is header-bearing TSV (composes with `jq -r '@tsv'`). Input contract: the
-//! key and time fields contain no tab or newline (true for ids and RFC3339).
+//! I/O is TSV (composes with `jq -r '@tsv'`). Input contract: the key and time fields
+//! contain no tab or newline (true for ids and RFC3339).
 
 use chrono::{DateTime, Duration, FixedOffset};
-use data_probe::{session_count, sessionize};
+use sessionize::{session_count, sessionize};
 use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 const HELP: &str = "\
-data-probe — probe the premises an aggregate rests on
+sessionize — assign a session_id to keyed, timestamped events
 
 usage:
-    data-probe sessions [FILE] --key <col> --time <col> --gap <dur>
+    sessionize [FILE] --key <col> --time <col> --gap <dur>
 
-sessions: assign a session_id to keyed, timestamped events (TSV with header; stdin
-if FILE is omitted). Reads --key and --time columns, sorts internally, and emits the
-input rows unchanged plus a session_id column, in the original row order. A new key
-or an idle gap strictly greater than --gap starts a new session.
+Reads a header-bearing TSV (stdin if FILE is omitted), sorts internally, and emits the
+input rows unchanged plus a session_id column, in the original row order. A new key or
+an idle gap strictly greater than --gap starts a new session.
 
     --gap   idle gap: 90s / 10m / 2h (bare number = seconds)
 
@@ -31,7 +31,7 @@ Facts only: it does not judge whether the gap is the right boundary, and does no
 prevent reopen-merge — it reproduces a definition so its effect on a metric can be
 checked downstream. Run it with different --gap and compare.
 
-    cat events.tsv | data-probe sessions --key user_id --time ts --gap 10m";
+    cat events.tsv | sessionize --key user_id --time ts --gap 10m";
 
 struct Args {
     file: Option<String>,
@@ -53,7 +53,7 @@ fn parse_dur(s: &str) -> Result<Duration, String> {
     d.ok_or_else(|| format!("duration out of range: {s}"))
 }
 
-fn parse_session_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
+fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut file, mut key, mut time, mut gap) = (None, None, None, None);
     while let Some(a) = it.next() {
         let mut next = |name: &str| it.next().ok_or(format!("{name} needs a value"));
@@ -100,7 +100,7 @@ fn read_input(file: &Option<String>) -> Result<String, String> {
     Ok(s)
 }
 
-fn run_sessions(args: Args) -> Result<(), String> {
+fn run_sessionize(args: Args) -> Result<(), String> {
     let input = read_input(&args.file)?;
     // Don't skip blank lines — a blank row is a column-count mismatch (caught below),
     // not something to silently drop.
@@ -152,22 +152,18 @@ fn run_sessions(args: Args) -> Result<(), String> {
 }
 
 fn run() -> Result<(), String> {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("sessions") => run_sessions(parse_session_args(args)?),
-        Some("-h") | Some("--help") | None => {
-            println!("{HELP}");
-            Ok(())
-        }
-        Some(other) => Err(format!("unknown command: {other}\n\n{HELP}")),
+    if std::env::args().skip(1).any(|a| a == "-h" || a == "--help") {
+        println!("{HELP}");
+        return Ok(());
     }
+    run_sessionize(parse_args(std::env::args().skip(1))?)
 }
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("data-probe: {e}");
+            eprintln!("sessionize: {e}");
             ExitCode::FAILURE
         }
     }

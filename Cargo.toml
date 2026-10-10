@@ -1,5 +1,5 @@
 [package]
-name = "data-probe"
+name = "sessionize"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
@@ -8,5 +8,5 @@ license = "MIT"
 chrono = "0.4"
 
 [[bin]]
-name = "data-probe"
+name = "sessionize"
 path = "src/main.rs"
