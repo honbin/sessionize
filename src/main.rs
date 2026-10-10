@@ -1,0 +1,174 @@
+//! `data-probe` — small tools to probe the premises an aggregate rests on.
+//!
+//! One subcommand today: `sessions`, which assigns a `session_id` to keyed,
+//! timestamped events under one idle-gap definition. The box is deliberately almost
+//! empty — more probes are added only when a real analysis needs one, never to fill
+//! the name. See `src/lib.rs` for the facts-not-verdict stance.
+//!
+//! I/O is header-bearing TSV (composes with `jq -r '@tsv'`). Input contract: the
+//! key and time fields contain no tab or newline (true for ids and RFC3339).
+
+use chrono::{DateTime, Duration, FixedOffset};
+use data_probe::{session_count, sessionize};
+use std::collections::HashSet;
+use std::io::{self, Read, Write};
+use std::process::ExitCode;
+
+const HELP: &str = "\
+data-probe — probe the premises an aggregate rests on
+
+usage:
+    data-probe sessions [FILE] --key <col> --time <col> --gap <dur>
+
+sessions: assign a session_id to keyed, timestamped events (TSV with header; stdin
+if FILE is omitted). Reads --key and --time columns, sorts internally, and emits the
+input rows unchanged plus a session_id column, in the original row order. A new key
+or an idle gap strictly greater than --gap starts a new session.
+
+    --gap   idle gap: 90s / 10m / 2h (bare number = seconds)
+
+Facts only: it does not judge whether the gap is the right boundary, and does not
+prevent reopen-merge — it reproduces a definition so its effect on a metric can be
+checked downstream. Run it with different --gap and compare.
+
+    cat events.tsv | data-probe sessions --key user_id --time ts --gap 10m";
+
+struct Args {
+    file: Option<String>,
+    key: String,
+    time: String,
+    gap: Duration,
+}
+
+fn parse_dur(s: &str) -> Result<Duration, String> {
+    let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
+    let n: i64 = num.parse().map_err(|_| format!("bad duration: {s}"))?;
+    // try_* so an out-of-range value is a normal arg error, not a panic.
+    let d = match unit {
+        "h" => Duration::try_hours(n),
+        "m" => Duration::try_minutes(n),
+        "s" | "" => Duration::try_seconds(n),
+        _ => return Err(format!("bad duration unit in {s} (use h/m/s)")),
+    };
+    d.ok_or_else(|| format!("duration out of range: {s}"))
+}
+
+fn parse_session_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
+    let (mut file, mut key, mut time, mut gap) = (None, None, None, None);
+    while let Some(a) = it.next() {
+        let mut next = |name: &str| it.next().ok_or(format!("{name} needs a value"));
+        match a.as_str() {
+            "--key" => key = Some(next("--key")?),
+            "--time" => time = Some(next("--time")?),
+            "--gap" => gap = Some(parse_dur(&next("--gap")?)?),
+            other if other.starts_with('-') => return Err(format!("unknown flag: {other}")),
+            other => {
+                if file.replace(other.to_string()).is_some() {
+                    return Err("multiple input files are not supported".into());
+                }
+            }
+        }
+    }
+    Ok(Args {
+        file,
+        key: key.ok_or("--key is required")?,
+        time: time.ok_or("--time is required")?,
+        gap: gap.ok_or("--gap is required")?,
+    })
+}
+
+fn col(header: &[&str], name: &str) -> Result<usize, String> {
+    header
+        .iter()
+        .position(|h| *h == name)
+        .ok_or(format!("column not found: {name}"))
+}
+
+fn read_input(file: &Option<String>) -> Result<String, String> {
+    let mut s = String::new();
+    match file {
+        Some(p) => std::fs::File::open(p)
+            .and_then(|mut f| f.read_to_string(&mut s))
+            .map(|_| ())
+            .map_err(|e| format!("{p}: {e}"))?,
+        None => io::stdin()
+            .lock()
+            .read_to_string(&mut s)
+            .map(|_| ())
+            .map_err(|e| format!("stdin: {e}"))?,
+    }
+    Ok(s)
+}
+
+fn run_sessions(args: Args) -> Result<(), String> {
+    let input = read_input(&args.file)?;
+    // Don't skip blank lines — a blank row is a column-count mismatch (caught below),
+    // not something to silently drop.
+    let mut lines = input.lines();
+    let header_line = lines.next().ok_or("empty input")?;
+    let header: Vec<&str> = header_line.split('\t').map(|s| s.trim()).collect();
+    let ki = col(&header, &args.key)?;
+    let ti = col(&header, &args.time)?;
+
+    // Keep rows in INPUT order; session ids are mapped back onto this order.
+    let mut raws: Vec<&str> = Vec::new();
+    let mut events: Vec<(String, DateTime<FixedOffset>)> = Vec::new();
+    for line in lines {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() != header.len() {
+            return Err(format!(
+                "column count mismatch: header has {}, row has {}: {:?}",
+                header.len(),
+                f.len(),
+                line
+            ));
+        }
+        // Values are used verbatim (no trim): the key is an identity, so trimming
+        // would silently merge " u1" and "u1". Normalize upstream if needed.
+        let time = DateTime::parse_from_rfc3339(f[ti])
+            .map_err(|e| format!("bad time {:?}: {e}", f[ti]))?;
+        events.push((f[ki].to_string(), time));
+        raws.push(line);
+    }
+
+    let ids = sessionize(&events, args.gap);
+
+    let out = io::stdout();
+    let mut out = io::BufWriter::new(out.lock());
+    writeln!(out, "{header_line}\tsession_id").map_err(|e| e.to_string())?;
+    for (raw, id) in raws.iter().zip(&ids) {
+        writeln!(out, "{raw}\t{id}").map_err(|e| e.to_string())?;
+    }
+    out.flush().map_err(|e| e.to_string())?;
+
+    let keys: HashSet<&str> = events.iter().map(|(k, _)| k.as_str()).collect();
+    eprintln!(
+        "events {} / keys {} / sessions {}",
+        events.len(),
+        keys.len(),
+        session_count(&ids)
+    );
+    Ok(())
+}
+
+fn run() -> Result<(), String> {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("sessions") => run_sessions(parse_session_args(args)?),
+        Some("-h") | Some("--help") | None => {
+            println!("{HELP}");
+            Ok(())
+        }
+        Some(other) => Err(format!("unknown command: {other}\n\n{HELP}")),
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("data-probe: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}

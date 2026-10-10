@@ -1,0 +1,12 @@
+[package]
+name = "data-probe"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+chrono = "0.4"
+
+[[bin]]
+name = "data-probe"
+path = "src/main.rs"
