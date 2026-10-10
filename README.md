@@ -11,17 +11,9 @@ It reports **facts, not verdicts**. It never says a number is wrong or a definit
 right — it surfaces what the number depends on and leaves the judgement to you and the
 downstream analysis.
 
-## A box, not a framework
-
-There is one subcommand today:
-
-| subcommand | what it does |
-|------------|--------------|
-| `sessions` | assign a `session_id` to keyed, timestamped events under one idle-gap definition |
-
-More probes get added only when a real analysis needs one — the name leaves room for a
-future, the implementation is decided by present need. An empty-ish box is fine; this
-is a place to put tools that became necessary, not a reason to grow them.
+data-probe currently provides one command, `sessions` — assign session IDs to keyed,
+timestamped events under one idle-gap definition. Others are added only when a real
+analysis needs them.
 
 ## Install
 
