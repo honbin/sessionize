@@ -119,7 +119,7 @@ fn run_sessionize(args: Args) -> Result<(), String> {
 
     // Keep rows in INPUT order; session ids are mapped back onto this order.
     let mut raws: Vec<&str> = Vec::new();
-    let mut events: Vec<(String, DateTime<FixedOffset>)> = Vec::new();
+    let mut events: Vec<(&str, DateTime<FixedOffset>)> = Vec::new();
     for line in lines {
         let f: Vec<&str> = line.split('\t').collect();
         if f.len() != header.len() {
@@ -134,7 +134,7 @@ fn run_sessionize(args: Args) -> Result<(), String> {
         // would silently merge " u1" and "u1". Normalize upstream if needed.
         let time = DateTime::parse_from_rfc3339(f[ti])
             .map_err(|e| format!("bad time {:?}: {e}", f[ti]))?;
-        events.push((f[ki].to_string(), time));
+        events.push((f[ki], time));
         raws.push(line);
     }
 
@@ -149,7 +149,7 @@ fn run_sessionize(args: Args) -> Result<(), String> {
     }
     out.flush().map_err(|e| e.to_string())?;
 
-    let keys: HashSet<&str> = events.iter().map(|(k, _)| k.as_str()).collect();
+    let keys: HashSet<&str> = events.iter().map(|(k, _)| *k).collect();
     eprintln!(
         "events {} / keys {} / sessions {}",
         events.len(),

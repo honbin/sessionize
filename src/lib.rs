@@ -18,7 +18,7 @@ use chrono::{DateTime, Duration, FixedOffset};
 /// `gap` must be non-negative (the CLI guarantees this). With a non-negative gap,
 /// same-timestamp events never land in different sessions regardless of order (a zero
 /// gap compares equal, not greater); a negative gap would split even equal timestamps.
-pub fn sessionize(events: &[(String, DateTime<FixedOffset>)], gap: Duration) -> Vec<u64> {
+pub fn sessionize(events: &[(&str, DateTime<FixedOffset>)], gap: Duration) -> Vec<u64> {
     debug_assert!(gap >= Duration::zero(), "gap must be non-negative");
     let mut order: Vec<usize> = (0..events.len()).collect();
     // Unstable is fine: ties (same key+time) share a session (a zero gap never
@@ -27,7 +27,7 @@ pub fn sessionize(events: &[(String, DateTime<FixedOffset>)], gap: Duration) -> 
     order.sort_unstable_by(|&a, &b| {
         events[a]
             .0
-            .cmp(&events[b].0)
+            .cmp(events[b].0)
             .then(events[a].1.cmp(&events[b].1))
     });
 
@@ -36,7 +36,7 @@ pub fn sessionize(events: &[(String, DateTime<FixedOffset>)], gap: Duration) -> 
     let mut cur_key: Option<&str> = None;
     let mut prev: Option<DateTime<FixedOffset>> = None;
     for &i in &order {
-        let (key, time) = (events[i].0.as_str(), events[i].1);
+        let (key, time) = (events[i].0, events[i].1);
         let new_key = cur_key != Some(key);
         let gapped = !new_key && prev.is_some_and(|p| time - p > gap);
         if new_key || gapped {
@@ -61,8 +61,8 @@ mod tests {
     fn t(s: &str) -> DateTime<FixedOffset> {
         DateTime::parse_from_rfc3339(s).unwrap()
     }
-    fn ev(k: &str, ts: &str) -> (String, DateTime<FixedOffset>) {
-        (k.to_string(), t(ts))
+    fn ev<'a>(k: &'a str, ts: &str) -> (&'a str, DateTime<FixedOffset>) {
+        (k, t(ts))
     }
     const GAP: Duration = Duration::minutes(10);
 
