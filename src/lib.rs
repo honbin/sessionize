@@ -24,26 +24,17 @@ pub fn sessionize(events: &[(&str, DateTime<FixedOffset>)], gap: Duration) -> Ve
     // Unstable is fine: ties (same key+time) share a session (a zero gap never
     // splits), so their order can't change the result, and output order is restored
     // from the input separately.
-    order.sort_unstable_by(|&a, &b| {
-        events[a]
-            .0
-            .cmp(events[b].0)
-            .then(events[a].1.cmp(&events[b].1))
-    });
+    order.sort_unstable_by_key(|&i| events[i]);
 
     let mut ids = vec![0u64; events.len()];
     let mut sid = 0u64;
-    let mut cur_key: Option<&str> = None;
-    let mut prev: Option<DateTime<FixedOffset>> = None;
+    let mut prev: Option<(&str, DateTime<FixedOffset>)> = None;
     for &i in &order {
-        let (key, time) = (events[i].0, events[i].1);
-        let new_key = cur_key != Some(key);
-        let gapped = !new_key && prev.is_some_and(|p| time - p > gap);
-        if new_key || gapped {
+        let (key, time) = events[i];
+        if prev.is_none_or(|(k, p)| k != key || time - p > gap) {
             sid += 1;
-            cur_key = Some(key);
         }
-        prev = Some(time);
+        prev = Some((key, time));
         ids[i] = sid;
     }
     ids

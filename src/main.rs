@@ -4,7 +4,7 @@
 use chrono::{DateTime, Duration, FixedOffset};
 use sessionize::{session_count, sessionize};
 use std::collections::HashSet;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::process::ExitCode;
 
 const HELP: &str = "\
@@ -87,20 +87,11 @@ fn col(header: &[&str], name: &str) -> Result<usize, String> {
     }
 }
 
-fn read_input(file: &Option<String>) -> Result<String, String> {
-    let mut s = String::new();
+fn read_input(file: Option<&str>) -> Result<String, String> {
     match file {
-        Some(p) => std::fs::File::open(p)
-            .and_then(|mut f| f.read_to_string(&mut s))
-            .map(|_| ())
-            .map_err(|e| format!("{p}: {e}"))?,
-        None => io::stdin()
-            .lock()
-            .read_to_string(&mut s)
-            .map(|_| ())
-            .map_err(|e| format!("stdin: {e}"))?,
+        Some(p) => std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}")),
+        None => io::read_to_string(io::stdin()).map_err(|e| format!("stdin: {e}")),
     }
-    Ok(s)
 }
 
 fn write_rows(header_line: &str, raws: &[&str], ids: &[u64]) -> io::Result<()> {
@@ -113,7 +104,7 @@ fn write_rows(header_line: &str, raws: &[&str], ids: &[u64]) -> io::Result<()> {
 }
 
 fn run_sessionize(args: Args) -> Result<(), String> {
-    let input = read_input(&args.file)?;
+    let input = read_input(args.file.as_deref())?;
     // Don't skip blank lines — a blank row is a column-count mismatch (caught below),
     // not something to silently drop.
     let mut lines = input.lines();
