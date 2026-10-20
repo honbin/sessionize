@@ -29,7 +29,6 @@ fn ids(out: &Output) -> Vec<String> {
     let s = String::from_utf8(out.stdout.clone()).unwrap();
     s.lines()
         .skip(1)
-        .filter(|l| !l.trim().is_empty())
         .map(|l| l.rsplit('\t').next().unwrap().to_string())
         .collect()
 }
@@ -211,4 +210,78 @@ fn bad_duration_is_an_error() {
     let out = sessions(&format!("{HEADER}\n"), "10x");
     assert!(!out.status.success());
     assert!(String::from_utf8(out.stderr).unwrap().contains("duration"));
+}
+
+#[test]
+fn existing_session_id_column_is_an_error() {
+    let out = sessions(
+        &format!("{HEADER}\tsession_id\nu1\t2026-10-09T12:00:00+09:00\topen\t1\n"),
+        "30m",
+    );
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("already has a session_id column")
+    );
+}
+
+#[test]
+fn header_names_are_matched_verbatim_not_trimmed() {
+    let out = sessions(
+        "user_id \ttimestamp\tevent\nu1\t2026-10-09T12:00:00+09:00\topen\n",
+        "30m",
+    );
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("column not found: user_id")
+    );
+}
+
+#[test]
+fn closed_stdout_is_not_a_failure() {
+    use std::io::{BufRead, BufReader};
+    // Large enough to overflow the pipe buffer, so the write after the reader closes fails.
+    let mut input = format!("{HEADER}\n");
+    for _ in 0..100_000 {
+        input.push_str("u1\t2026-10-09T12:00:00+09:00\topen\n");
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sessionize"))
+        .args(["--key", "user_id", "--time", "timestamp", "--gap", "30m"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn sessionize");
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut first)
+        .unwrap();
+    assert_eq!(first.trim_end(), format!("{HEADER}\tsession_id"));
+    writer.join().unwrap().unwrap();
+    let out = child.wait_with_output().expect("wait sessionize");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(out.status.success(), "{stderr}");
+    assert!(!stderr.contains("Broken pipe"), "{stderr}");
+}
+
+#[test]
+fn help_flag_prints_usage() {
+    let out = run(&["--help"], "");
+    assert!(out.status.success());
+    assert!(String::from_utf8(out.stdout).unwrap().contains("usage:"));
+}
+
+#[test]
+fn flag_like_value_is_a_value_not_help() {
+    let out = run(
+        &["--key", "-h", "--time", "timestamp", "--gap", "30m"],
+        "-h\ttimestamp\nu1\t2026-10-09T12:00:00+09:00\n",
+    );
+    assert!(out.status.success());
+    assert_eq!(ids(&out), vec!["1"]);
 }

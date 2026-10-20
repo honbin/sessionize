@@ -26,7 +26,7 @@ Needs a Rust toolchain; installs the `sessionize` binary to `~/.cargo/bin`.
 sessionize [FILE] --key <col> --time <col> --gap <dur>
 ```
 
-Reads a header-bearing **TSV** (stdin if `FILE` is omitted), sorts internally, and emits
+Reads a header-bearing, UTF-8 **TSV** (stdin if `FILE` is omitted), sorts internally, and emits
 the input rows unchanged plus a `session_id` column — **in the original row order**.
 Events are grouped by key; within each key, a new session starts when the idle gap is
 strictly greater than `--gap`.
@@ -38,7 +38,10 @@ strictly greater than `--gap`.
 - Input contract: the `--key` and `--time` fields contain no tab or newline (true for
   ids and RFC3339 timestamps), and are used **verbatim** — surrounding whitespace is
   significant (` u1` and `u1` are different keys), so normalize upstream if needed.
-  Rows whose column count differs from the header are an error, not silently mishandled.
+  Header names are matched verbatim too. Rows whose column count differs from the header
+  are an error, not silently mishandled.
+- The input must not already have a `session_id` column. To compare gaps, run each gap on
+  the original input rather than chaining runs.
 
 It composes with the usual extraction idiom — reshape the source to TSV upstream, let
 the metric live downstream:

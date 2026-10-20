@@ -1,11 +1,5 @@
-//! `sessionize` — assign a session_id to keyed, timestamped events.
-//!
-//! A small Unix filter: reads a header-bearing TSV, groups events per key under one
-//! idle-gap definition, and emits the input rows unchanged plus a `session_id` column
-//! (in input order). See `src/lib.rs` for the pure core and the facts-not-verdict stance.
-//!
-//! I/O is TSV (composes with `jq -r '@tsv'`). Input contract: the key and time fields
-//! contain no tab or newline (true for ids and RFC3339).
+//! CLI for `sessionize`: TSV in, the same rows plus `session_id` out. The core is in
+//! `src/lib.rs`; usage and the input contract are in the README.
 
 use chrono::{DateTime, Duration, FixedOffset};
 use sessionize::{session_count, sessionize};
@@ -58,11 +52,13 @@ fn set_once<T>(slot: &mut Option<T>, val: T, flag: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
+/// `Ok(None)` means help was requested.
+fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
     let (mut file, mut key, mut time, mut gap) = (None, None, None, None);
     while let Some(a) = it.next() {
         let mut next = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
         match a.as_str() {
+            "-h" | "--help" => return Ok(None),
             "--key" => set_once(&mut key, next("--key")?, "--key")?,
             "--time" => set_once(&mut time, next("--time")?, "--time")?,
             "--gap" => set_once(&mut gap, parse_dur(&next("--gap")?)?, "--gap")?,
@@ -74,12 +70,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             }
         }
     }
-    Ok(Args {
+    Ok(Some(Args {
         file,
         key: key.ok_or("--key is required")?,
         time: time.ok_or("--time is required")?,
         gap: gap.ok_or("--gap is required")?,
-    })
+    }))
 }
 
 fn col(header: &[&str], name: &str) -> Result<usize, String> {
@@ -107,15 +103,31 @@ fn read_input(file: &Option<String>) -> Result<String, String> {
     Ok(s)
 }
 
+fn write_rows(header_line: &str, raws: &[&str], ids: &[u64]) -> io::Result<()> {
+    let mut out = io::BufWriter::new(io::stdout().lock());
+    writeln!(out, "{header_line}\tsession_id")?;
+    for (raw, id) in raws.iter().zip(ids) {
+        writeln!(out, "{raw}\t{id}")?;
+    }
+    out.flush()
+}
+
 fn run_sessionize(args: Args) -> Result<(), String> {
     let input = read_input(&args.file)?;
     // Don't skip blank lines — a blank row is a column-count mismatch (caught below),
     // not something to silently drop.
     let mut lines = input.lines();
     let header_line = lines.next().ok_or("empty input")?;
-    let header: Vec<&str> = header_line.split('\t').map(|s| s.trim()).collect();
+    let header: Vec<&str> = header_line.split('\t').collect();
     let ki = col(&header, &args.key)?;
     let ti = col(&header, &args.time)?;
+    // Appending a second session_id would leave downstream lookups by name ambiguous,
+    // which is exactly what chaining runs with different --gap produces.
+    if header.contains(&"session_id") {
+        return Err(
+            "input already has a session_id column; drop it upstream before re-running".into(),
+        );
+    }
 
     // Keep rows in INPUT order; session ids are mapped back onto this order.
     let mut raws: Vec<&str> = Vec::new();
@@ -141,13 +153,12 @@ fn run_sessionize(args: Args) -> Result<(), String> {
     let ids = sessionize(&events, args.gap);
     debug_assert_eq!(ids.len(), raws.len());
 
-    let out = io::stdout();
-    let mut out = io::BufWriter::new(out.lock());
-    writeln!(out, "{header_line}\tsession_id").map_err(|e| e.to_string())?;
-    for (raw, id) in raws.iter().zip(&ids) {
-        writeln!(out, "{raw}\t{id}").map_err(|e| e.to_string())?;
+    match write_rows(header_line, &raws, &ids) {
+        Ok(()) => {}
+        // The reader closed early (`| head`): not a failure of this filter.
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+        Err(e) => return Err(e.to_string()),
     }
-    out.flush().map_err(|e| e.to_string())?;
 
     let keys: HashSet<&str> = events.iter().map(|(k, _)| *k).collect();
     eprintln!(
@@ -160,11 +171,13 @@ fn run_sessionize(args: Args) -> Result<(), String> {
 }
 
 fn run() -> Result<(), String> {
-    if std::env::args().skip(1).any(|a| a == "-h" || a == "--help") {
-        println!("{HELP}");
-        return Ok(());
+    match parse_args(std::env::args().skip(1))? {
+        Some(args) => run_sessionize(args),
+        None => {
+            println!("{HELP}");
+            Ok(())
+        }
     }
-    run_sessionize(parse_args(std::env::args().skip(1))?)
 }
 
 fn main() -> ExitCode {
